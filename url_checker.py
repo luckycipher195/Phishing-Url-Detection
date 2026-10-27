@@ -6,7 +6,8 @@ def check_url(url):
     suspicious = []
 
     parsed_url = urlparse(url if "://" in url else "http://" + url)
-    hostname = parsed_url.hostname or ""
+    hostname = parsed_url.hostname or "" 
+    if not hostname: suspicious.append("URL is missing a hostname")
     try:
         ipaddress.ip_address(hostname)
         suspicious.append("Hostname is an IP address instead of a domain name")
@@ -39,6 +40,10 @@ def check_url(url):
             print("-", reason)
     else:
         print("\nNo suspicious patterns detected by these basic rules")
-
 url = input("Enter a URL to check: ").strip()
-check_url(url)
+
+if not url:
+    print("Error: URL cannot be empty.")
+else:
+    check_url(url)
+
