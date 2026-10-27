@@ -1,11 +1,17 @@
 
 from urllib.parse import urlparse
+import ipaddress
 
 def check_url(url):
     suspicious = []
 
     parsed_url = urlparse(url if "://" in url else "http://" + url)
     hostname = parsed_url.hostname or ""
+    try:
+        ipaddress.ip_address(hostname)
+        suspicious.append("Hostname is an IP address instead of a domain name")
+    except ValueError:
+        pass
 
     if parsed_url.scheme != "https":
         suspicious.append("URL does not use HTTPS")
