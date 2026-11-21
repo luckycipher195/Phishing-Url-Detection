@@ -1,6 +1,7 @@
 from urllib.parse import urlparse
 import ipaddress
 import re
+from feature_extractor import extract_features
 def check_url(url):
 
     suspicious = []
@@ -50,8 +51,6 @@ def check_url(url):
 
     if " " in hostname:
         suspicious.append("Hostname contains spaces")
-
-        suspicious.append("Hostname contains spaces")
     try:
         ipaddress.ip_address(hostname)
         suspicious.append("Hostname is an IP address instead of a domain name")
@@ -63,6 +62,21 @@ def check_url(url):
 
     if "@" in parsed_url.netloc:
         suspicious.append("Contains @ in the URL authority section")
+    suspicious_keywords = [
+        "login",
+        "verify",
+        "secure",
+        "update",
+        "account",
+        "signin",
+        "password",
+        "confirm"
+        ]
+    for keyword in suspicious_keywords:
+         if keyword in url.lower():
+            suspicious.append(
+                f"URL contains suspicious keyword: {keyword}"
+            )     
     if "-" in hostname and not any(
         label.startswith("-") or label.endswith("-") for label in labels
     ):
@@ -70,27 +84,40 @@ def check_url(url):
     if len(url) > 75:
         suspicious.append("URL is unusually long")
 
-    # Demonstration rule: detect misleading bank.com text
-    
-    trusted_domains = ["bank.com", "paypal.com", "google.com"]
+    # Demonstration rule: detect misleading bank.com text 
+    trusted_brands = {
+       "bank": "bank.com",
+       "paypal": "paypal.com",
+       "google": "google.com"
+    }
 
-    for domain in trusted_domains:
-        if domain in hostname and not (
+    for brand, domain in trusted_brands.items():
+        if brand in hostname.split(".")[0].split("-") and not (
             hostname == domain or hostname.endswith("." + domain)
-       ):
+        ):
             suspicious.append(
-                f"Contains {domain} text but the hostname is not {domain}"
-         )
-
+                f"Possible {brand} brand impersonation detected"
+            )
     if suspicious:
         print("\nPotentially suspicious URL")
         for reason in suspicious:
             print("-", reason)
     else:
         print("\nNo suspicious patterns detected by these basic rules")
-url = input("Enter a URL to check: ").strip()
+    features = extract_features(url)
 
-if not url:
-    print("Error: URL cannot be empty.")
-else:
-    check_url(url)
+    print("\n========== EXTRACTED URL FEATURES ==========")
+
+    for feature, value in features.items():
+        print(f"{feature}: {value}")
+
+    print("============================================")
+# Main program
+# Main program
+if __name__ == "__main__":
+    url = input("Enter a URL to check: ").strip()
+
+    if not url:
+        print("Error: URL cannot be empty.")
+    else:
+        check_url(url)
