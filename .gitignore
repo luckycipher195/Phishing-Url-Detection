@@ -5,3 +5,9 @@ __pycache__/
 dataset/
 external_data/
 model/external_test/
+# Local database
+phishguard.db
+
+# Experimental no-HTTPS files
+*_no_https*
+train_model_no_https.py
