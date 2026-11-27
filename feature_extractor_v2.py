@@ -4,6 +4,7 @@ from collections import Counter
 import ipaddress
 import math
 import re
+import tldextract
 
 
 POPULAR_TLDS = {
@@ -15,6 +16,9 @@ SUSPICIOUS_EXTENSIONS = {
     ".exe", ".scr", ".bat", ".cmd", ".ps1",
     ".sh", ".vbs", ".js", ".jar", ".msi"
 }
+
+# Offline suffix-list extraction
+extract_domain = tldextract.TLDExtract(suffix_list_urls=())
 
 
 def extract_features(url):
@@ -43,13 +47,27 @@ def extract_features(url):
     if any(char.isspace() for char in hostname):
         raise ValueError("URL contains invalid whitespace in hostname")
 
-    parts = hostname.split(".")
-
+    # Detect IP address
     try:
         ipaddress.ip_address(hostname)
         has_ip = 1
+        domain_parts = None
     except ValueError:
         has_ip = 0
+        domain_parts = extract_domain(hostname)
+
+    # Extract domain and suffix
+    if has_ip:
+        domain_name = hostname
+        subdomain_count = 0
+        tld = ""
+    else:
+        domain_name = domain_parts.domain
+        tld = domain_parts.suffix
+        subdomain_count = (
+            len(domain_parts.subdomain.split("."))
+            if domain_parts.subdomain else 0
+        )
 
     # URL entropy
     counts = Counter(url)
@@ -57,9 +75,6 @@ def extract_features(url):
         (count / len(url)) * math.log2(count / len(url))
         for count in counts.values()
     )
-
-    # Domain and TLD
-    tld = parts[-1] if len(parts) > 1 else ""
 
     # Numeric characters
     digit_count = sum(char.isdigit() for char in url)
@@ -79,22 +94,22 @@ def extract_features(url):
         "https_flag": int(parsed.scheme.lower() == "https"),
         "url_entropy": entropy,
         "token_count": len(tokens),
-        "subdomain_count": max(0, len(parts) - 2),
+        "subdomain_count": subdomain_count,
         "query_param_count": query_count,
         "tld_length": len(tld),
         "path_length": len(parsed.path),
         "has_hyphen_in_domain": int("-" in hostname),
         "number_of_digits": digit_count,
-        "tld_popularity": int(tld in POPULAR_TLDS),
+        "tld_popularity": int(
+            any(suffix in POPULAR_TLDS for suffix in tld.split("."))
+        ),
         "suspicious_file_extension": int(
             any(
                 parsed.path.lower().endswith(ext)
                 for ext in SUSPICIOUS_EXTENSIONS
             )
         ),
-        "domain_name_length": (
-            len(parts[-2]) if len(parts) >= 2 else len(hostname)
-        ),
+        "domain_name_length": len(domain_name),
         "percentage_numeric_chars": (
             digit_count / len(url) * 100
         )

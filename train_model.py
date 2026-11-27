@@ -2,6 +2,8 @@
 import os
 import joblib
 import pandas as pd
+import ipaddress
+import tldextract
 
 from urllib.parse import urlsplit, urlunsplit
 from feature_extractor_v2 import extract_features
@@ -23,7 +25,7 @@ from sklearn.metrics import (
 )
 
 
-# STEP 1: Create output folder
+# STEP 1: Setup
 
 os.makedirs("model", exist_ok=True)
 
@@ -37,55 +39,63 @@ df["ClassLabel"] = df["ClassLabel"].astype(int)
 print("Total URLs:", len(df))
 
 
-# STEP 2: Normalize URLs for grouping
+# STEP 2: Domain extractor
 
-def normalize_url(url):
+domain_extractor = tldextract.TLDExtract(
+    suffix_list_urls=()
+)
+
+
+# STEP 3: Extract registrable domain for grouping
+
+def get_domain_group(url):
 
     url = str(url).strip()
 
     if not url:
-        return ""
-
-    if "://" not in url:
-        url = "http://" + url
+        return None
 
     try:
-        parsed = urlsplit(url)
+        parsed = urlsplit(
+            url if "://" in url else "http://" + url
+        )
 
-        scheme = parsed.scheme.lower()
         hostname = (parsed.hostname or "").lower()
 
         if not hostname:
-            return url.lower()
+            return None
 
-        port = parsed.port
+        try:
+            ipaddress.ip_address(hostname)
+            return hostname
 
-        if port and not (
-            (scheme == "http" and port == 80)
-            or (scheme == "https" and port == 443)
-        ):
-            netloc = f"{hostname}:{port}"
-        else:
-            netloc = hostname
+        except ValueError:
+            extracted = domain_extractor(hostname)
 
-        return urlunsplit((
-            scheme,
-            netloc,
-            parsed.path or "/",
-            parsed.query,
-            ""
-        ))
+            if extracted.domain and extracted.suffix:
+                return (
+                    extracted.domain + "." + extracted.suffix
+                )
+
+            return hostname
 
     except ValueError:
-        return url.lower()
+        return None
 
 
-df["normalized_url"] = df["URL"].apply(normalize_url)
+print("\nExtracting domain groups...")
+
+df["domain_group"] = df["URL"].apply(get_domain_group)
+
+df = df.dropna(subset=["domain_group"]).reset_index(drop=True)
+
+print("Valid domain records:", len(df))
+print("Unique domains:", df["domain_group"].nunique())
 
 
-# STEP 3: Extract features
+# STEP 4: Extract URL features
 
-print("\nExtracting features from URLs...")
+print("\nExtracting URL features...")
 
 feature_records = []
 valid_indices = []
@@ -102,7 +112,9 @@ for index, url in enumerate(df["URL"]):
         continue
 
     if (index + 1) % 10000 == 0:
-        print(f"Processed {index + 1}/{len(df)} URLs")
+        print(
+            f"Processed {index + 1}/{len(df)} URLs"
+        )
 
 
 X = pd.DataFrame(feature_records)
@@ -110,17 +122,16 @@ X = pd.DataFrame(feature_records)
 valid_df = df.iloc[valid_indices].reset_index(drop=True)
 
 y = valid_df["ClassLabel"]
-
-groups = valid_df["normalized_url"]
+groups = valid_df["domain_group"]
 
 print("\nValid records:", len(X))
 print("Number of features:", X.shape[1])
-print("Unique URL groups:", groups.nunique())
+print("Unique domain groups:", groups.nunique())
 
 
-# STEP 4: Group-based stratified split
+# STEP 5: Domain-based group split
 
-print("\nPerforming group-based train-test split...")
+print("\nPerforming domain-based group split...")
 
 splitter = StratifiedGroupKFold(
     n_splits=5,
@@ -141,7 +152,9 @@ y_test = y.iloc[test_indices]
 train_groups = set(groups.iloc[train_indices])
 test_groups = set(groups.iloc[test_indices])
 
-overlapping_groups = train_groups.intersection(test_groups)
+overlapping_groups = train_groups.intersection(
+    test_groups
+)
 
 print("\nTraining records:", len(X_train))
 print("Testing records:", len(X_test))
@@ -152,17 +165,17 @@ print(y_train.value_counts().sort_index())
 print("\nTesting class distribution:")
 print(y_test.value_counts().sort_index())
 
-print("\nOverlapping URL groups:", len(overlapping_groups))
+print("\nOverlapping domains:", len(overlapping_groups))
 
 if overlapping_groups:
     raise RuntimeError(
-        "Data leakage detected! URL groups overlap."
+        "Data leakage detected! Domains overlap."
     )
 
-print("Group leakage check passed!")
+print("Domain-level leakage check passed!")
 
 
-# STEP 5: Define models
+# STEP 6: Define models
 
 models = {
 
@@ -189,7 +202,7 @@ models = {
 }
 
 
-# STEP 6: Train and evaluate models
+# STEP 7: Train and evaluate models
 
 results = []
 trained_models = {}
@@ -205,7 +218,10 @@ for name, model in models.items():
     print("Predicting...")
     predictions = model.predict(X_test)
 
-    accuracy = accuracy_score(y_test, predictions)
+    accuracy = accuracy_score(
+        y_test,
+        predictions
+    )
 
     precision = precision_score(
         y_test,
@@ -257,14 +273,16 @@ for name, model in models.items():
     print(report)
 
     print("\nConfusion Matrix:")
-    print(confusion_matrix(
-        y_test,
-        predictions,
-        labels=[0, 1]
-    ))
+    print(
+        confusion_matrix(
+            y_test,
+            predictions,
+            labels=[0, 1]
+        )
+    )
 
 
-# STEP 7: Save model comparison
+# STEP 8: Save model comparison
 
 results_df = pd.DataFrame(results)
 
@@ -277,7 +295,7 @@ results_df.to_csv(
 )
 
 
-# STEP 8: Select best model
+# STEP 9: Select best model
 
 best_model_name = results_df.loc[
     results_df["Phishing F1-Score"].idxmax(),
@@ -289,7 +307,7 @@ best_model = trained_models[best_model_name]
 print("\nBest model:", best_model_name)
 
 
-# STEP 9: Generate best model evaluation
+# STEP 10: Generate final evaluation
 
 best_predictions = best_model.predict(X_test)
 
@@ -310,7 +328,10 @@ best_matrix = confusion_matrix(
 confusion_df = pd.DataFrame(
     best_matrix,
     index=["Actual Phishing", "Actual Legitimate"],
-    columns=["Predicted Phishing", "Predicted Legitimate"]
+    columns=[
+        "Predicted Phishing",
+        "Predicted Legitimate"
+    ]
 )
 
 confusion_df.to_csv(
@@ -318,7 +339,7 @@ confusion_df.to_csv(
 )
 
 
-# STEP 10: Save evaluation reports
+# STEP 11: Save reports
 
 with open(
     "model/classification_report.txt",
@@ -326,8 +347,14 @@ with open(
     encoding="utf-8"
 ) as file:
 
-    file.write(f"Best Model: {best_model_name}\n")
-    file.write("Evaluation: Stratified Group-Based Split\n\n")
+    file.write(
+        f"Best Model: {best_model_name}\n"
+    )
+
+    file.write(
+        "Evaluation: Domain-Based Group Split\n\n"
+    )
+
     file.write(best_report)
 
 
@@ -337,16 +364,21 @@ with open(
     encoding="utf-8"
 ) as file:
 
-    file.write("Evaluation: Stratified Group-Based Split\n")
+    file.write(
+        "Evaluation: Domain-Based Group Split\n"
+    )
 
     for name, report in evaluation_reports.items():
 
-        file.write(f"\n========== {name} ==========\n")
+        file.write(
+            f"\n========== {name} ==========\n"
+        )
+
         file.write(report)
         file.write("\n")
 
 
-# STEP 11: Save trained model
+# STEP 12: Save trained model
 
 model_data = {
     "model": best_model,
@@ -364,7 +396,7 @@ joblib.dump(
 )
 
 
-# STEP 12: Final output
+# STEP 13: Final output
 
 print("\n========== FINAL EVALUATION ==========")
 
@@ -377,10 +409,11 @@ print("\nBest Model Confusion Matrix:")
 print(confusion_df)
 
 print("\n========== FILES SAVED ==========")
+
 print("1. model/phishing_model.joblib")
 print("2. model/model_comparison.csv")
 print("3. model/confusion_matrix.csv")
 print("4. model/classification_report.txt")
 print("5. model/all_model_reports.txt")
 
-print("\nGroup-based training and evaluation completed!")
+print("\nDomain-based training completed!")
