@@ -2,3 +2,4 @@ pandas
 numpy
 scikit-learn
 joblib
+tldextract==5.4.0

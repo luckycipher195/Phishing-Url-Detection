@@ -3,9 +3,10 @@ import os
 import joblib
 import pandas as pd
 
+from urllib.parse import urlsplit, urlunsplit
 from feature_extractor_v2 import extract_features
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -29,64 +30,139 @@ os.makedirs("model", exist_ok=True)
 print("Loading dataset...")
 
 df = pd.read_csv("dataset/cleaned_dataset.csv")
-df = df.dropna(subset=["URL", "ClassLabel"])
+df = df.dropna(subset=["URL", "ClassLabel"]).copy()
+
+df["ClassLabel"] = df["ClassLabel"].astype(int)
 
 print("Total URLs:", len(df))
 
 
-# STEP 2: Extract features
+# STEP 2: Normalize URLs for grouping
+
+def normalize_url(url):
+
+    url = str(url).strip()
+
+    if not url:
+        return ""
+
+    if "://" not in url:
+        url = "http://" + url
+
+    try:
+        parsed = urlsplit(url)
+
+        scheme = parsed.scheme.lower()
+        hostname = (parsed.hostname or "").lower()
+
+        if not hostname:
+            return url.lower()
+
+        port = parsed.port
+
+        if port and not (
+            (scheme == "http" and port == 80)
+            or (scheme == "https" and port == 443)
+        ):
+            netloc = f"{hostname}:{port}"
+        else:
+            netloc = hostname
+
+        return urlunsplit((
+            scheme,
+            netloc,
+            parsed.path or "/",
+            parsed.query,
+            ""
+        ))
+
+    except ValueError:
+        return url.lower()
+
+
+df["normalized_url"] = df["URL"].apply(normalize_url)
+
+
+# STEP 3: Extract features
 
 print("\nExtracting features from URLs...")
 
 feature_records = []
+valid_indices = []
 
-for index, url in enumerate(df["URL"], start=1):
+for index, url in enumerate(df["URL"]):
 
     try:
-        feature_records.append(extract_features(url))
+        features = extract_features(url)
+
+        feature_records.append(features)
+        valid_indices.append(index)
 
     except (ValueError, TypeError):
-        feature_records.append(None)
+        continue
 
-    if index % 10000 == 0:
-        print(f"Processed {index}/{len(df)} URLs")
+    if (index + 1) % 10000 == 0:
+        print(f"Processed {index + 1}/{len(df)} URLs")
 
 
-# Remove invalid records
+X = pd.DataFrame(feature_records)
 
-valid_indices = [
-    i for i, features in enumerate(feature_records)
-    if features is not None
-]
+valid_df = df.iloc[valid_indices].reset_index(drop=True)
 
-X = pd.DataFrame(
-    [feature_records[i] for i in valid_indices]
-)
+y = valid_df["ClassLabel"]
 
-y = df.iloc[valid_indices]["ClassLabel"].astype(int)
+groups = valid_df["normalized_url"]
 
 print("\nValid records:", len(X))
 print("Number of features:", X.shape[1])
-
-print("\nFeature names:")
-print(X.columns.tolist())
+print("Unique URL groups:", groups.nunique())
 
 
-# STEP 3: Split dataset
+# STEP 4: Group-based stratified split
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.20,
-    random_state=42,
-    stratify=y
+print("\nPerforming group-based train-test split...")
+
+splitter = StratifiedGroupKFold(
+    n_splits=5,
+    shuffle=True,
+    random_state=42
 )
+
+train_indices, test_indices = next(
+    splitter.split(X, y, groups=groups)
+)
+
+X_train = X.iloc[train_indices]
+X_test = X.iloc[test_indices]
+
+y_train = y.iloc[train_indices]
+y_test = y.iloc[test_indices]
+
+train_groups = set(groups.iloc[train_indices])
+test_groups = set(groups.iloc[test_indices])
+
+overlapping_groups = train_groups.intersection(test_groups)
 
 print("\nTraining records:", len(X_train))
 print("Testing records:", len(X_test))
 
+print("\nTraining class distribution:")
+print(y_train.value_counts().sort_index())
 
-# STEP 4: Define models
+print("\nTesting class distribution:")
+print(y_test.value_counts().sort_index())
+
+print("\nOverlapping URL groups:", len(overlapping_groups))
+
+if overlapping_groups:
+    raise RuntimeError(
+        "Data leakage detected! URL groups overlap."
+    )
+
+print("Group leakage check passed!")
+
+
+# STEP 5: Define models
 
 models = {
 
@@ -113,7 +189,7 @@ models = {
 }
 
 
-# STEP 5: Train and evaluate models
+# STEP 6: Train and evaluate models
 
 results = []
 trained_models = {}
@@ -162,7 +238,6 @@ for name, model in models.items():
 
     trained_models[name] = model
 
-    # Classification report
     report = classification_report(
         y_test,
         predictions,
@@ -189,7 +264,7 @@ for name, model in models.items():
     ))
 
 
-# STEP 6: Save model comparison
+# STEP 7: Save model comparison
 
 results_df = pd.DataFrame(results)
 
@@ -201,10 +276,8 @@ results_df.to_csv(
     index=False
 )
 
-print("\nModel comparison saved.")
 
-
-# STEP 7: Select best model
+# STEP 8: Select best model
 
 best_model_name = results_df.loc[
     results_df["Phishing F1-Score"].idxmax(),
@@ -216,7 +289,7 @@ best_model = trained_models[best_model_name]
 print("\nBest model:", best_model_name)
 
 
-# STEP 8: Generate best model evaluation
+# STEP 9: Generate best model evaluation
 
 best_predictions = best_model.predict(X_test)
 
@@ -234,8 +307,6 @@ best_matrix = confusion_matrix(
     labels=[0, 1]
 )
 
-# Save confusion matrix
-
 confusion_df = pd.DataFrame(
     best_matrix,
     index=["Actual Phishing", "Actual Legitimate"],
@@ -246,7 +317,8 @@ confusion_df.to_csv(
     "model/confusion_matrix.csv"
 )
 
-# Save classification report
+
+# STEP 10: Save evaluation reports
 
 with open(
     "model/classification_report.txt",
@@ -254,16 +326,18 @@ with open(
     encoding="utf-8"
 ) as file:
 
-    file.write(f"Best Model: {best_model_name}\n\n")
+    file.write(f"Best Model: {best_model_name}\n")
+    file.write("Evaluation: Stratified Group-Based Split\n\n")
     file.write(best_report)
 
-# Save all model reports
 
 with open(
     "model/all_model_reports.txt",
     "w",
     encoding="utf-8"
 ) as file:
+
+    file.write("Evaluation: Stratified Group-Based Split\n")
 
     for name, report in evaluation_reports.items():
 
@@ -272,7 +346,7 @@ with open(
         file.write("\n")
 
 
-# STEP 9: Save trained model
+# STEP 11: Save trained model
 
 model_data = {
     "model": best_model,
@@ -290,7 +364,7 @@ joblib.dump(
 )
 
 
-# STEP 10: Final output
+# STEP 12: Final output
 
 print("\n========== FINAL EVALUATION ==========")
 
@@ -309,4 +383,4 @@ print("3. model/confusion_matrix.csv")
 print("4. model/classification_report.txt")
 print("5. model/all_model_reports.txt")
 
-print("\nTraining and evaluation completed successfully!")
+print("\nGroup-based training and evaluation completed!")

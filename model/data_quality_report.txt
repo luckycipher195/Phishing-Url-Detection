@@ -1,0 +1,42 @@
+
+ADVANCED PHISHING URL DETECTION
+DATA QUALITY AND DATA LEAKAGE REPORT
+====================================
+
+Total dataset rows: 100872
+
+1. EXACT DUPLICATES
+-------------------
+Rows belonging to exact duplicate groups: 0
+Number of exact duplicate groups: 0
+
+2. NORMALIZED DUPLICATES
+------------------------
+Rows belonging to normalized duplicate groups: 1338
+Number of normalized duplicate groups: 662
+
+3. LABEL CONFLICTS
+------------------
+URLs with conflicting labels: 0
+
+4. FEATURE EXTRACTION
+---------------------
+Valid URLs: 100872
+Invalid URLs: 0
+
+5. TRAIN-TEST LEAKAGE CHECK
+---------------------------
+Training rows: 80697
+Testing rows: 20175
+Unique URLs appearing in both sets: 206
+
+INTERPRETATION
+--------------
+If URLs appear in both training and testing sets,
+the evaluation may be affected by duplicate leakage.
+
+If the same normalized URL has multiple labels,
+the dataset may contain inconsistent labeling.
+
+These results require further investigation.
+They do not independently prove model performance.
